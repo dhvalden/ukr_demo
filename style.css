@@ -1,0 +1,22 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+}
+
+.svg-container {
+  width: 100vw;
+  height: 100vh;
+}
+
+svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+  /* simple 2-column layout: map left, chart right */
+  body       { display:flex; margin:0; height:100vh; }
+  .svg-container { flex:1 1 auto; }              /* map takes remaining space */
+  #bar-wrapper   { width:300px; flex:none; border-left:1px solid #aaa; }
+  #bar-chart     { width:100%; height:100%; display:block; }
