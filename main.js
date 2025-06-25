@@ -1,261 +1,112 @@
-const svg = d3.select("#map");
-const zoomGroup = svg.append("g")
-                   .attr("class", "zoom-group");
+/* -----------------------------------------------------------------------------
+ * LEAFLET MAP  –  tiny build: background tiles + boundary outline + event dots
+ * -------------------------------------------------------------------------- */
+const MAP_CFG = {
+  center   : [48.5, 32],     // Ukraine geographic centre
+  zoom     : 6,
+  eventMax : 1000,           // how many synthetic mentions to drop
+  dotColor : "#E53",
+  dotRadius: 20,
+  dropMs   : 1200
+};
 
-    /* ---- GLOBAL store for counts ---- */
-const counts = new Map();   // key: place name, value: count so far
+const fmt    = d3.timeFormat("%d %b %Y");
+const label  = d3.select("#time-label");
 
-// Projection and path
-const projection = d3.geoMercator()
-  .center([32, 48.5])
-  .scale(4000)
-  .translate([500, 500]);
+/* 1  Initialise Leaflet map ----------------------------------------------- */
+const map = L.map("map", {
+  zoomSnap: 0.25, zoomDelta: 0.25, wheelPxPerZoomLevel: 120
+}).setView(MAP_CFG.center, MAP_CFG.zoom);
 
-const path = d3.geoPath().projection(projection);
+/* simple OSM raster tiles */
+/*L.tileLayer(  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+/*  { maxZoom: 18, attribution: "© Esri, Earthstar Geographics" }).addTo(map);
 
-const zoom = d3.zoom()
-  .scaleExtent([1, 12])
-  .on("zoom", event => {
-    zoomGroup.attr("transform", event.transform);
+/* simple OSM raster tiles */
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 18, attribution: "© OpenStreetMap contributors"
+}).addTo(map);
+
+/* 2  Draw a grey outline for Ukraine (ADM0) -------------------------------- */
+d3.json("ukr_adm0.json").then(geo => {
+  L.geoJSON(geo, {
+    style: { color:"#555", weight:1, fill:false }
+  }).addTo(map);
+});
+
+/* 2b  Draw ADM-1 and ADM-2 subdivisions & add a layer switcher ---------- */
+Promise.all([
+  d3.json("admin_UKR_level_1.geojson"),   // Oblasts
+  d3.json("admin_UKR_level_2.geojson")    // Raions
+]).then(([adm1, adm2]) => {
+
+  const adm1Layer = L.geoJSON(adm1, {
+    style: { color: "#2c7be5", weight: 1, fill: false }   // mid-blue
   });
 
-svg.call(zoom);
+  const adm2Layer = L.geoJSON(adm2, {
+    style: { color: "#67a9ff", weight: 0.8, fill: false } // light-blue
+  });
 
+  /* add ADM-1 on by default, keep ADM-2 off until user checks */
+  adm1Layer.addTo(map);
 
-// Load and draw the map
-d3.json("ukraine_map.geojson").then(ukraine => {
-  zoomGroup.append("g")
-    .attr("class", "map")
-    .selectAll("path")
-    .data(ukraine.features)
-    .enter()
-    .append("path")
-    .attr("d", path)
-    .style("fill", "#ccc")
-    .style("stroke", "#333")
-    .style("stroke-width", 0.5);
-});
-
-// Load and plot cities AND towns with different symbols
-d3.json("ukraine_places.geojson").then(places => {
-
-  // Separate the two groups
-  const cities =  places.features.filter(d => d.properties.place === "city");
-  const towns  =  places.features.filter(d => d.properties.place === "town");
-
-  const placesGroup = zoomGroup.append("g").attr("class", "places");
-
-  /* ───────────────────────── 1. CITIES  ───────────────────────── */
-  placesGroup
-    .selectAll("g.city-marker")
-    .data(cities)
-    .enter()
-    .append("g")
-      .attr("class", "city-marker")
-      .attr("transform", d => {
-        const [x, y] = projection(d.geometry.coordinates);
-        return `translate(${x}, ${y})`;
-      })
-      .each(function(d) {
-        const g = d3.select(this);
-
-        // outer ring
-        g.append("circle")
-          .attr("r", 5)
-          .style("fill", "none")
-          .style("stroke", "black")
-          .style("stroke-width", 1);
-
-        // centre dot
-        g.append("circle")
-          .attr("r", 1.5)
-          .style("fill", "black");
-
-        // tooltip
-        g.append("title")
-          .text(d.properties["name:en"] || d.properties.name);
-        /* ──────── NEW: city label ──────── */
-        g.append("text")
-        .text(d.properties["name:en"] || d.properties.name)
-        .attr("x", 7)               // slight offset to the right
-        .attr("y", 3)               // slight offset down
-        .style("font-size", "9px")
-        .style("font-family", "sans-serif")
-        .style("fill", "#000")
-        .style("pointer-events", "none");  // keeps text from capturing hover
-      });
-
-  /* ───────────────────────── 2. TOWNS  ───────────────────────── */
-  placesGroup
-    .selectAll("circle.town-marker")
-    .data(towns)
-    .enter()
-    .append("circle")
-      .attr("class", "town-marker")
-      .attr("cx", d => projection(d.geometry.coordinates)[0])
-      .attr("cy", d => projection(d.geometry.coordinates)[1])
-      .attr("r", .7)
-      .style("fill", "black")
-      .style("stroke", "black")
-      .style("stroke-width", 0.5)
-      .append("title")
-      .text(d => d.properties["name:en"] || d.properties.name);
-});
-
-/********************************************************************
- * 1.  LOAD PLACES  &  BUILD A FUZZY INDEX
- *******************************************************************/
-d3.json("ukraine_places.geojson").then(placesGeo => {
-
-  // keep only city & town features
-  const places = placesGeo.features.filter(d =>
-    d.properties.place === "city" || d.properties.place === "town"
-  );
-
-  // build Fuse index on both "name" and "name:en" where present
-  const fuse = new Fuse(
-    places.map(p => ({
-      name: p.properties["name:en"] || p.properties.name,
-      feature: p
-    })),
+  L.control.layers(
+    null,                                   // no extra basemaps for now
     {
-      keys: ["name"],
-      threshold: 0.3     // fuzziness (0 = exact, 1 = everything)
-    }
-  );
+      "Oblasts (ADM-1)": adm1Layer,
+      "Raions (ADM-2)": adm2Layer
+    },
+    { collapsed: false, position: "topright" }
+  ).addTo(map);
+});
 
-  /*****************************************************************
-   * 2.  GENERATE 1000 SYNTHETIC MENTIONS  (place + datetime)
-   ****************************************************************/
-  const now      = new Date();
-  const oneWeek  = 7 * 24 * 60 * 60 * 1000;    // milliseconds
-  const mentions = d3.range(1000).map(() => {
-    const rndPlace = places[Math.floor(Math.random() * places.length)];
-    return {
-      placeText : rndPlace.properties["name:en"] || rndPlace.properties.name, // what social media “said”
-      dateObj   : new Date(now - Math.random() * oneWeek)
-    };
-  });
+/* 3  Load real alerts & animate oldest-to-newest -------------------------- */
+d3.json("red_alert_anomalies.json").then(alerts => {
 
-  // sort by time ASC so animation is chronological
-  mentions.sort((a, b) => a.dateObj - b.dateObj);
+  // sort chronologically oldest → newest
+  alerts.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-  /*****************************************************************
-   * 3.  PREPARE A SCALED RADIUS FUNCTION  (pulse size)
-   ****************************************************************/
-  const pulseScale = d3.scaleLinear()
-    .domain([0, 1])
-    .range([1e-6, 50]);   // from invisibly small to 15 px
+  const colorFor = {
+    red   : "#E53",
+    yellow: "#F7B500",
+    green : "#2ecc71"
+  };
 
-  /*****************************************************************
-   * 4.  ANIMATE ONE MENTION AT A TIME
-   ****************************************************************/
-  let i = 0;
-  const step = 400; // ms between mentions
+  let idx = 0;
+  const ticker = d3.interval(() => {
+    if (idx >= alerts.length) { ticker.stop(); return; }
 
-  d3.interval(() => {
-    if (i >= mentions.length) return;
+    const d = alerts[idx++];
+    const col = colorFor[d.alert] || "#555";
+    label.text( fmt(new Date(d.date)) );   // show current alert’s timestamp
 
-    const m       = mentions[i++];
-    const search  = fuse.search(m.placeText, { limit: 1 });
-    if (!search.length) return;   // skip if we can’t match
 
-    const feat    = search[0].item.feature;
-    const coords  = projection(feat.geometry.coordinates);
+    // start tiny so we can grow it
+    const mark = L.circleMarker([d.lat, d.lon], {
+      radius      : 0.1,
+      color       : col,
+      weight      : 1,
+      fillColor   : col,
+      fillOpacity : 0.8,
+      opacity     : 1
+    }).addTo(map);
 
-    // create a transient pulse
-    const pulse = svg.append("circle")
-      .attr("cx", coords[0])
-      .attr("cy", coords[1])
-      .attr("r", 1e-6)
-      .style("fill", "red")
-      .style("fill-opacity", 0.4)
-      .style("stroke", "red")
-      .style("stroke-opacity", 0.8);
+    mark.bindPopup(
+      `<b>${d.place}</b><br>` +
+      `${d3.timeFormat("%d %b %Y %H:%M")(new Date(d.date))}<br>` +
+      `Alert: <span style="color:${col}">${d.alert}</span>`
+    );
 
-    pulse.transition().duration(step * 10.5)
-      .attrTween("r", () => t => pulseScale(t))
-      .style("fill-opacity", 0)
-      .style("stroke-opacity", 0)
-      .remove();
+    /* ------- animate radius & fade with d3.timer ---------------------- */
+    const R0 = 0.1, R1 = MAP_CFG.dotRadius * 4, DUR = 3000;
+    const timer = d3.timer(elapsed => {
+      const t = Math.min(elapsed / DUR, 1);        // 0 → 1
+      const r = R0 + (R1 - R0) * t;
+      mark.setRadius(r)
+          .setStyle({ opacity: 1 - t, fillOpacity: 0.8 * (1 - t) });
+      if (t === 1) { map.removeLayer(mark); timer.stop(); }
+    });
 
-/* ---- in your interval right after you find feat / coords ---- */
-    const nameEn = feat.properties["name:en"] || feat.properties.name;
-    counts.set(nameEn, (counts.get(nameEn) || 0) + 1);
-
-/* convert to array & redraw */
-    const dataArray = Array.from(counts, ([name,count]) => ({name, count}));
-    updateBarChart(dataArray);
-  }, step);
-
-});  // end of places load
-
-/*************************************************************
- *  BAR-CHART SET-UP
- ************************************************************/
-const barSvg   = d3.select("#bar-chart"),
-      barWidth = 300,
-      barHeight= 600,
-      margin   = {top:10, right:10, bottom:30, left:60};
-
-const innerW = barWidth  - margin.left - margin.right,
-      innerH = barHeight - margin.top  - margin.bottom;
-
-const gBar = barSvg.append("g")
-  .attr("transform", `translate(${margin.left},${margin.top})`);
-
-const xScale = d3.scaleBand()
-  .range([0, innerW])
-  .paddingInner(0.2);
-
-const yScale = d3.scaleLinear()
-  .range([innerH, 0]);
-
-const xAxisG = gBar.append("g")
-  .attr("class","x-axis")
-  .attr("transform", `translate(0,${innerH})`);
-
-const yAxisG = gBar.append("g").attr("class","y-axis");
-
-/* helper: redraw chart with latest counts array [{name,count},…] */
-function updateBarChart(data) {
-
-  // keep only top N, sort descending
-  const topN = 10;
-  const top  = data.sort((a,b)=>d3.descending(a.count,b.count))
-                   .slice(0, topN);
-
-  xScale.domain(top.map(d=>d.name));
-  yScale.domain([0, d3.max(top, d=>d.count)]).nice();
-
-  /* ---- BARS ---- */
-  const bars = gBar.selectAll("rect").data(top, d=>d.name);
-
-  bars.enter().append("rect")
-      .attr("x", d=>xScale(d.name))
-      .attr("y", innerH)
-      .attr("width", xScale.bandwidth())
-      .attr("height", 0)
-      .style("fill", "steelblue")
-    .merge(bars)
-      .transition().duration(300)
-      .attr("x", d=>xScale(d.name))
-      .attr("y", d=>yScale(d.count))
-      .attr("height", d=>innerH - yScale(d.count));
-
-  bars.exit()
-      .transition().duration(300)
-      .attr("y", innerH)
-      .attr("height", 0)
-      .remove();
-
-  /* ---- AXES ---- */
-  xAxisG.transition().duration(300)
-        .call(d3.axisBottom(xScale).tickSizeOuter(0))
-        .selectAll("text")
-        .attr("transform","rotate(-40)")
-        .style("text-anchor","end");
-
-  yAxisG.transition().duration(300)
-        .call(d3.axisLeft(yScale).ticks(5));
-}
+  }, MAP_CFG.dropMs);   // drop one alert every 400 ms
+});

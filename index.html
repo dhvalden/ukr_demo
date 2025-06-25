@@ -2,19 +2,35 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Ukraine Event Animation</title>
-  <link rel="stylesheet" href="style.css">
+  <title>Ukraine Events — Leaflet</title>
+
+<!-- Leaflet assets -->
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+</script>
+
+
+  <style>
+    html, body { margin:0; height:100%; font:14px sans-serif; }
+    #map      { height:100%; width:100%; }
+  </style>
 </head>
 <body>
-  <div class="svg-container">
-    <svg id="map" viewBox="0 0 1000 1000" preserveAspectRatio="xMidYMid meet"></svg>
-  </div>
-  <div id="bar-wrapper">
-    <svg id="bar-chart" viewBox="0 0 300 600"></svg>
-  </div>
+  <div id="map"></div>
+
+<div id="time-label"
+     style="position:absolute; bottom:10px; left:10px;
+            background:rgba(255,255,255,.9); padding:4px 8px;
+            border:1px solid #aaa; font:30px sans-serif;
+            z-index:1000; pointer-events:none;">
+  --
+</div>
+  <!-- d3 for data wrangling + Fuse for fuzzy names -->
   <script src="https://d3js.org/d3.v7.min.js"></script>
-  <script src="https://d3js.org/topojson.v1.min.js"></script>
-  <!-- add Fuse.js just below d3 -->
   <script src="https://cdn.jsdelivr.net/npm/fuse.js@6.6.2"></script>
   <script src="main.js"></script>
 </body>
